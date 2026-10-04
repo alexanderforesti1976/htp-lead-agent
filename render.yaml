@@ -1,0 +1,12 @@
+services:
+  - type: cron
+    name: htp-lead-agent
+    runtime: python
+    schedule: "0 2 * * *"  # Ogni notte alle 2:00 UTC
+    buildCommand: pip install -r requirements.txt
+    startCommand: python agent.py
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
