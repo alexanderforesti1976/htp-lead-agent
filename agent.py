@@ -45,8 +45,22 @@ def get_sheets_service():
     )
     return build("sheets", "v4", credentials=creds)
 
+def ensure_sheet_exists(service):
+    """Crea il foglio 'Leads' se non esiste."""
+    spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+    sheet_names = [s["properties"]["title"] for s in spreadsheet["sheets"]]
+    
+    if SHEET_NAME not in sheet_names:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": [{"addSheet": {"properties": {"title": SHEET_NAME}}}]}
+        ).execute()
+        print(f"Foglio '{SHEET_NAME}' creato.")
+
 def init_sheet(service):
     """Crea l'intestazione se il foglio è vuoto."""
+    ensure_sheet_exists(service)
+    
     result = service.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!A1:A1"
     ).execute()
