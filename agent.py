@@ -1,7 +1,6 @@
 """
-HTP Lead Research Agent
-Cerca potenziali clienti per HTP (automotive e industrial) e li salva su Google Sheet.
-Gira su Render come cron job ogni notte.
+HTP Lead Research Agent v2
+Cerca potenziali clienti per HTP con query tecniche specifiche.
 """
 
 import os
@@ -9,34 +8,54 @@ import json
 import time
 import datetime
 import anthropic
-import requests
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-# ── Configurazione ──────────────────────────────────────────────────────────
 SHEET_ID = "1X6_7RiA773b_e1b3s3-pvtunsHI35g0Lqqj2n_sZCUA"
 SHEET_NAME = "Leads"
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]  # JSON come stringa
+GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
 
-# Settori e paesi target
+# Query tecniche specifiche per aziende che usano guarnizioni elastomeriche
 SEARCH_TARGETS = [
-    # Italia
-    {"paese": "Italia", "settore": "automotive", "query": "produttori componenti automotive Italia sistemi tenuta guarnizioni valvole"},
-    {"paese": "Italia", "settore": "industrial", "query": "produttori valvole raccordi componenti idraulici industriali Italia"},
+    # Italia - valvole e raccordi
+    {"paese": "Italia", "settore": "Valvole industriali", "query": "produttori valvole industriali Italia guarnizioni elastomero tenuta sede valvola"},
+    {"paese": "Italia", "settore": "Pompe", "query": "produttori pompe centrifughe volumetriche Italia tenuta meccanica elastomero"},
+    {"paese": "Italia", "settore": "Raccordi idraulici", "query": "produttori raccordi idraulici pneumatici Italia guarnizioni O-ring NBR FKM"},
+    {"paese": "Italia", "settore": "Climatizzazione", "query": "produttori componenti HVAC climatizzazione Italia tenuta refrigerante guarnizioni elastomero"},
+    {"paese": "Italia", "settore": "Automotive Tier2", "query": "produttori componenti automotive Tier2 Italia sistemi tenuta fluidi guarnizioni gomma metallo"},
+    {"paese": "Italia", "settore": "Oil Gas", "query": "produttori componenti oil gas Italia valvole guarnizioni FKM EPDM alta pressione tenuta"},
+    
     # Germania
-    {"paese": "Germania", "settore": "automotive", "query": "Automobilzulieferer Dichtungen Gummi Metall Deutschland Hersteller"},
-    {"paese": "Germania", "settore": "industrial", "query": "Hersteller Ventile hydraulische Komponenten Dichtungen Deutschland"},
+    {"paese": "Germania", "settore": "Valvole industriali", "query": "Hersteller Industrieventile Dichtungen Elastomer EPDM NBR FKM Deutschland Sitzventil"},
+    {"paese": "Germania", "settore": "Pompe", "query": "Hersteller Pumpen Deutschland Wellendichtung Elastomer Gleitringdichtung Gummi"},
+    {"paese": "Germania", "settore": "Automotive", "query": "Automobilzulieferer Deutschland Dichtungssystem Kuehlmittel Hydraulik Gummi Metall overmolded"},
+    {"paese": "Germania", "settore": "Hydraulik", "query": "Hersteller Hydraulikkomponenten Deutschland Dichtungen NBR FKM Hochdruck"},
+    
     # Francia
-    {"paese": "Francia", "settore": "automotive", "query": "fabricants composants automobile joints étanchéité caoutchouc métal France"},
-    {"paese": "Francia", "settore": "industrial", "query": "fabricants vannes raccords composants hydrauliques industriels France"},
-    # Polonia
-    {"paese": "Polonia", "settore": "automotive", "query": "producenci komponentów samochodowych uszczelnienia Polska"},
+    {"paese": "Francia", "settore": "Valvole", "query": "fabricants robinets vannes industrielles France joints elastomere EPDM NBR etancheite"},
+    {"paese": "Francia", "settore": "Pompes", "query": "fabricants pompes industrielles France joints dynamiques etancheite elastomere"},
+    {"paese": "Francia", "settore": "Automotive", "query": "equipementiers automobiles France joints etancheite fluides gomme metal surmoulage"},
+    
     # Spagna
-    {"paese": "Spagna", "settore": "automotive", "query": "fabricantes componentes automoción juntas estanqueidad caucho metal España"},
+    {"paese": "Spagna", "settore": "Valvulas", "query": "fabricantes valvulas industriales España juntas elastomero EPDM NBR estanqueidad"},
+    {"paese": "Spagna", "settore": "Automotive", "query": "proveedores componentes automocion España juntas estanqueidad caucho metal sobremoldeo"},
+    
+    # Polonia - mercato in crescita
+    {"paese": "Polonia", "settore": "Automotive", "query": "producenci podzespolow samochodowych Polska uszczelnienia elastomer guma metal"},
+    {"paese": "Polonia", "settore": "Przemysl", "query": "producenci zaworow pomp przemyslowych Polska uszczelnienia elastomerowe NBR EPDM"},
+    
+    # Benelux
+    {"paese": "Belgio/Olanda", "settore": "Valves", "query": "manufacturers industrial valves Belgium Netherlands elastomer seals EPDM NBR FKM high pressure"},
+    {"paese": "Belgio/Olanda", "settore": "Automotive", "query": "automotive suppliers Belgium Netherlands rubber metal overmolded sealing gaskets Tier2"},
+    
+    # UK
+    {"paese": "UK", "settore": "Valves pumps", "query": "manufacturers valves pumps UK elastomer seals rubber metal overmoulded gaskets fluid sealing"},
+    
+    # Svezia/Scandinavia
+    {"paese": "Svezia/Scandinavia", "settore": "Industrial", "query": "manufacturers industrial valves pumps Sweden Norway Denmark elastomer seals rubber gaskets"},
 ]
 
-# ── Google Sheets ────────────────────────────────────────────────────────────
 def get_sheets_service():
     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
     creds = service_account.Credentials.from_service_account_info(
@@ -46,10 +65,8 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 def ensure_sheet_exists(service):
-    """Crea il foglio 'Leads' se non esiste."""
     spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
     sheet_names = [s["properties"]["title"] for s in spreadsheet["sheets"]]
-    
     if SHEET_NAME not in sheet_names:
         service.spreadsheets().batchUpdate(
             spreadsheetId=SHEET_ID,
@@ -58,13 +75,10 @@ def ensure_sheet_exists(service):
         print(f"Foglio '{SHEET_NAME}' creato.")
 
 def init_sheet(service):
-    """Crea l'intestazione se il foglio è vuoto."""
     ensure_sheet_exists(service)
-    
     result = service.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!A1:A1"
     ).execute()
-    
     if not result.get("values"):
         headers = [[
             "Data", "Azienda", "Paese", "Settore", "Dimensione",
@@ -79,7 +93,6 @@ def init_sheet(service):
         ).execute()
 
 def get_existing_companies(service):
-    """Legge le aziende già presenti per evitare duplicati."""
     result = service.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!B:B"
     ).execute()
@@ -87,7 +100,6 @@ def get_existing_companies(service):
     return {row[0].strip().lower() for row in values if row}
 
 def append_leads(service, leads):
-    """Aggiunge nuovi lead al foglio."""
     if not leads:
         return
     service.spreadsheets().values().append(
@@ -98,61 +110,44 @@ def append_leads(service, leads):
         body={"values": leads}
     ).execute()
 
-# ── Web Search ───────────────────────────────────────────────────────────────
-def web_search(query: str) -> str:
-    """Usa l'API di Claude con web search tool."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4000,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": query}]
-    )
-    
-    # Estrai testo dalla risposta
-    text = ""
-    for block in response.content:
-        if hasattr(block, "text"):
-            text += block.text
-    return text
-
-# ── Agent Core ───────────────────────────────────────────────────────────────
 def research_companies(target: dict, existing_companies: set) -> list:
-    """Cerca aziende per un target specifico e restituisce lead qualificati."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    
     print(f"  → Cercando: {target['paese']} / {target['settore']}")
-    
-    # Step 1: Ricerca aziende
-    search_prompt = f"""Sei un agente di ricerca commerciale per HTP - High Tech Project S.r.l., 
+
+    search_prompt = f"""Sei un agente di ricerca commerciale B2B per HTP - High Tech Project S.r.l., 
 produttore italiano specializzato in guarnizioni sovrastampate gomma-metallo e gomma-plastica.
 
-Cerca aziende potenzialmente interessate ai prodotti HTP in {target['paese']} nel settore {target['settore']}.
+HTP produce componenti di tenuta in elastomero sovrastampati su inserto metallico o plastico:
+- Guarnizioni statiche e dinamiche sovrastampate
+- Componenti per valvole (sedi valvola, otturatori con guarnizione integrata)
+- Tenute per pompe e sistemi idraulici
+- Componenti automotive (sistemi di tenuta fluidi, raffreddamento, climatizzazione)
+- Articoli tecnici in gomma NBR, EPDM, FKM, HNBR, VMQ su progetto
 
-Query di ricerca: {target['query']}
+I CLIENTI IDEALI di HTP sono aziende che:
+- Producono valvole industriali, raccordi, componenti idraulici o pneumatici
+- Producono pompe centrifughe, volumetriche, dosatrici
+- Producono componenti automotive (sistemi raffreddamento, climatizzazione, freni, carburante)
+- Producono sistemi HVAC, refrigerazione, trattamento acque
+- Hanno nel loro prodotto guarnizioni elastomeriche gomma-metallo o guarnizioni statiche/dinamiche in gomma tecnica
+- Hanno 50-1000 dipendenti
+- Sono in {target['paese']}
 
-HTP produce:
-- Guarnizioni sovrastampate gomma-metallo e gomma-plastica
-- Componenti di tenuta per automotive (Tier 2)
-- Componenti di tenuta per applicazioni industriali (valvole, raccordi, pompe, sistemi idraulici)
-- Articoli tecnici in gomma
+Esegui questa ricerca web: {target['query']}
 
-Cerca almeno 5 aziende che:
-1. Producono componenti che richiedono guarnizioni o sistemi di tenuta
-2. Hanno 50-1000 dipendenti
-3. Operano nei settori automotive o industrial
-
-Per ogni azienda trovata fornisci:
-- Nome azienda
+Trova almeno 5-8 aziende CONCRETE con nome reale, non agenzie o distributori.
+Per ogni azienda fornisci:
+- Nome azienda esatto
 - Sito web
-- Dimensione (dipendenti stimati)
-- Cosa producono
-- Perché potrebbero aver bisogno di guarnizioni sovrastampate
-- Contatto trovato (nome, ruolo, email o LinkedIn se pubblici)
-- Numero di telefono se disponibile
+- Città e paese
+- Dimensione stimata (dipendenti)
+- Prodotto principale che richiederebbe guarnizioni elastomeriche
+- Nome e ruolo del responsabile acquisti o R&D se trovabile pubblicamente
+- Email o LinkedIn se pubblici
+- Telefono se disponibile
 
-Rispondi in formato JSON con una lista di aziende."""
+Rispondi SOLO in JSON con questa struttura:
+{{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
@@ -160,84 +155,53 @@ Rispondi in formato JSON con una lista di aziende."""
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": search_prompt}]
     )
-    
-    # Estrai testo
+
     full_text = ""
     for block in response.content:
         if hasattr(block, "text"):
             full_text += block.text
-    
+
     if not full_text:
         return []
-    
-    # Step 2: Struttura i risultati
-    parse_prompt = f"""Basandoti su questo testo di ricerca, estrai le informazioni sulle aziende trovate 
-e restituisci un JSON valido con questa struttura esatta:
 
-{{
-  "aziende": [
-    {{
-      "nome": "Nome Azienda",
-      "paese": "{target['paese']}",
-      "settore": "{target['settore']}",
-      "dimensione": "100-200 dipendenti",
-      "sito": "www.esempio.com",
-      "contatto_nome": "Mario Rossi (o vuoto se non trovato)",
-      "contatto_ruolo": "Responsabile Acquisti (o vuoto)",
-      "email": "email@esempio.com (o vuoto)",
-      "linkedin": "url linkedin (o vuoto)",
-      "telefono": "+39... (o vuoto)",
-      "perche_htp": "Breve spiegazione perché potrebbero aver bisogno di HTP"
-    }}
-  ]
-}}
-
-Testo da analizzare:
-{full_text[:3000]}
-
-Restituisci SOLO il JSON, senza altro testo."""
-
-    parse_response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2000,
-        messages=[{"role": "user", "content": parse_prompt}]
-    )
-    
-    parse_text = ""
-    for block in parse_response.content:
-        if hasattr(block, "text"):
-            parse_text += block.text
-    
     # Pulisci e parsa JSON
-    parse_text = parse_text.strip()
-    if parse_text.startswith("```"):
-        parse_text = parse_text.split("```")[1]
-        if parse_text.startswith("json"):
-            parse_text = parse_text[4:]
-    
+    text = full_text.strip()
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            if part.startswith("json"):
+                text = part[4:].strip()
+                break
+            elif "{" in part:
+                text = part.strip()
+                break
+
     try:
-        data = json.loads(parse_text)
+        # Trova il JSON nella risposta
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start >= 0 and end > start:
+            data = json.loads(text[start:end])
+        else:
+            return []
         aziende = data.get("aziende", [])
     except:
-        print(f"    ⚠ Errore parsing JSON per {target['paese']}/{target['settore']}")
+        print(f"    ⚠ Errore parsing JSON")
         return []
-    
-    # Filtra duplicati e prepara righe per Google Sheet
+
     today = datetime.date.today().strftime("%d/%m/%Y")
     rows = []
-    
+
     for az in aziende:
         nome = az.get("nome", "").strip()
         if not nome or nome.lower() in existing_companies:
             continue
-        
         existing_companies.add(nome.lower())
-        
         rows.append([
             today,
             nome,
             az.get("paese", target["paese"]),
-            az.get("settore", target["settore"]),
+            az.get("prodotto", target["settore"]),
             az.get("dimensione", ""),
             az.get("sito", ""),
             az.get("contatto_nome", ""),
@@ -249,41 +213,37 @@ Restituisci SOLO il JSON, senza altro testo."""
             "Da contattare",
             ""
         ])
-    
+
     print(f"    ✓ Trovate {len(rows)} nuove aziende")
     return rows
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 def main():
     print(f"\n{'='*50}")
-    print(f"HTP Lead Agent - {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    print(f"HTP Lead Agent v2 - {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
     print(f"{'='*50}\n")
-    
-    # Setup Google Sheets
+
     print("Connessione a Google Sheets...")
     service = get_sheets_service()
     init_sheet(service)
     existing = get_existing_companies(service)
     print(f"Aziende già presenti: {len(existing)}\n")
-    
-    # Ricerca per ogni target
+
     all_leads = []
     for target in SEARCH_TARGETS:
         try:
             leads = research_companies(target, existing)
             all_leads.extend(leads)
-            time.sleep(3)  # Pausa tra le ricerche
+            time.sleep(2)
         except Exception as e:
             print(f"  ⚠ Errore per {target['paese']}/{target['settore']}: {e}")
-    
-    # Salva su Google Sheet
+
     if all_leads:
         print(f"\nSalvataggio {len(all_leads)} nuovi lead su Google Sheet...")
         append_leads(service, all_leads)
         print(f"✓ Completato!")
     else:
-        print("\nNessun nuovo lead trovato in questa sessione.")
-    
+        print("\nNessun nuovo lead trovato.")
+
     print(f"\nProssima esecuzione: domani notte\n")
 
 if __name__ == "__main__":
