@@ -2,7 +2,7 @@
 HTP Lead Research Agent v2
 Cerca potenziali clienti per HTP con query tecniche specifiche.
 """
-
+h
 import os
 import json
 import time
@@ -150,8 +150,8 @@ Rispondi SOLO in JSON con questa struttura:
 {{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=4000,
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2000,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=[{"role": "user", "content": search_prompt}]
     )
