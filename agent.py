@@ -2,7 +2,7 @@
 HTP Lead Research Agent v2
 Cerca potenziali clienti per HTP con query tecniche specifiche.
 """
-h
+
 import os
 import json
 import time
