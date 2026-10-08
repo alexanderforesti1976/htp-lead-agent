@@ -1,5 +1,5 @@
 """
-HTP Lead Research Agent v2
+HTP Lead Research Agent v3
 Cerca potenziali clienti per HTP con query tecniche specifiche.
 """
 
@@ -16,45 +16,99 @@ SHEET_NAME = "Leads"
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
 
-# Query tecniche specifiche per aziende che usano guarnizioni elastomeriche
+# Ogni notte vengono processati MAX_TARGETS_PER_RUN target scelti ciclicamente
+# così da coprire sempre query diverse senza ripetere le stesse
+MAX_TARGETS_PER_RUN = 8
+
 SEARCH_TARGETS = [
-    # Italia - valvole e raccordi
-    {"paese": "Italia", "settore": "Valvole industriali", "query": "produttori valvole industriali Italia guarnizioni elastomero tenuta sede valvola"},
-    {"paese": "Italia", "settore": "Pompe", "query": "produttori pompe centrifughe volumetriche Italia tenuta meccanica elastomero"},
+    # ── ITALIA ──────────────────────────────────────────────────────────────
+    {"paese": "Italia", "settore": "Valvole industriali", "query": "produttori valvole industriali italiani guarnizioni elastomero tenuta sede valvola NBR EPDM"},
+    {"paese": "Italia", "settore": "Pompe centrifughe", "query": "produttori pompe centrifughe Italia tenuta meccanica elastomero guarnizioni gomma"},
     {"paese": "Italia", "settore": "Raccordi idraulici", "query": "produttori raccordi idraulici pneumatici Italia guarnizioni O-ring NBR FKM"},
-    {"paese": "Italia", "settore": "Climatizzazione", "query": "produttori componenti HVAC climatizzazione Italia tenuta refrigerante guarnizioni elastomero"},
-    {"paese": "Italia", "settore": "Automotive Tier2", "query": "produttori componenti automotive Tier2 Italia sistemi tenuta fluidi guarnizioni gomma metallo"},
-    {"paese": "Italia", "settore": "Oil Gas", "query": "produttori componenti oil gas Italia valvole guarnizioni FKM EPDM alta pressione tenuta"},
-    
-    # Germania
-    {"paese": "Germania", "settore": "Valvole industriali", "query": "Hersteller Industrieventile Dichtungen Elastomer EPDM NBR FKM Deutschland Sitzventil"},
-    {"paese": "Germania", "settore": "Pompe", "query": "Hersteller Pumpen Deutschland Wellendichtung Elastomer Gleitringdichtung Gummi"},
+    {"paese": "Italia", "settore": "HVAC climatizzazione", "query": "produttori componenti HVAC climatizzazione Italia tenuta refrigerante guarnizioni elastomero"},
+    {"paese": "Italia", "settore": "Automotive Tier2", "query": "fornitori automotive Tier2 Italia sistemi tenuta fluidi guarnizioni gomma metallo sovrastampaggio"},
+    {"paese": "Italia", "settore": "Oil Gas", "query": "produttori componenti oil gas Italia valvole guarnizioni FKM EPDM alta pressione"},
+    {"paese": "Italia", "settore": "Alimentare food processing", "query": "produttori attrezzature food processing alimentare Italia guarnizioni FDA EPDM tenuta igienica"},
+    {"paese": "Italia", "settore": "Trattamento acque", "query": "produttori sistemi trattamento acque depurazione Italia valvole guarnizioni EPDM cloro resistenti"},
+    {"paese": "Italia", "settore": "Farmaceutico", "query": "produttori componenti farmaceutici biofarmaceutici Italia guarnizioni silicone VMQ EPDM FDA"},
+    {"paese": "Italia", "settore": "Compressori aria", "query": "produttori compressori aria industriali Italia valvole guarnizioni elastomero tenuta pistone"},
+    {"paese": "Italia", "settore": "Macchine agricole", "query": "produttori componenti macchine agricole Italia guarnizioni idraulica elastomero"},
+    {"paese": "Italia", "settore": "Antincendio", "query": "produttori sistemi antincendio sprinkler Italia valvole guarnizioni tenuta EPDM"},
+    {"paese": "Italia", "settore": "Stampi e macchine utensili", "query": "costruttori macchine utensili presse Italia guarnizioni idrauliche NBR tenuta olio"},
+    {"paese": "Italia", "settore": "Pneumatica", "query": "produttori attuatori cilindri pneumatici Italia guarnizioni NBR tenuta aria compressa"},
+
+    # ── GERMANIA ────────────────────────────────────────────────────────────
+    {"paese": "Germania", "settore": "Industrieventile", "query": "Hersteller Industrieventile Dichtungen Elastomer EPDM NBR FKM Deutschland Sitzventil"},
+    {"paese": "Germania", "settore": "Pumpen", "query": "Hersteller Pumpen Deutschland Wellendichtung Elastomer Gleitringdichtung Gummi"},
     {"paese": "Germania", "settore": "Automotive", "query": "Automobilzulieferer Deutschland Dichtungssystem Kuehlmittel Hydraulik Gummi Metall overmolded"},
-    {"paese": "Germania", "settore": "Hydraulik", "query": "Hersteller Hydraulikkomponenten Deutschland Dichtungen NBR FKM Hochdruck"},
-    
-    # Francia
-    {"paese": "Francia", "settore": "Valvole", "query": "fabricants robinets vannes industrielles France joints elastomere EPDM NBR etancheite"},
-    {"paese": "Francia", "settore": "Pompes", "query": "fabricants pompes industrielles France joints dynamiques etancheite elastomere"},
+    {"paese": "Germania", "settore": "Hydraulik", "query": "Hersteller Hydraulikkomponenten Zylinder Deutschland Dichtungen NBR FKM Hochdruck"},
+    {"paese": "Germania", "settore": "Lebensmitteltechnik", "query": "Hersteller Lebensmittelmaschinen Deutschland FDA Dichtungen EPDM Silikon Hygiene"},
+    {"paese": "Germania", "settore": "Chemietechnik", "query": "Hersteller Chemieventile Reaktoren Deutschland FKM PTFE Dichtungen chemikalienbestaendig"},
+    {"paese": "Germania", "settore": "Druckluft Pneumatik", "query": "Hersteller Druckluftkomponenten Pneumatikzylinder Deutschland NBR Dichtungen"},
+    {"paese": "Germania", "settore": "Wassertechnik", "query": "Hersteller Wasseraufbereitung Klaeranlage Deutschland EPDM Dichtungen Absperrventile"},
+
+    # ── FRANCIA ─────────────────────────────────────────────────────────────
+    {"paese": "Francia", "settore": "Robinetterie industrielle", "query": "fabricants robinets vannes industrielles France joints elastomere EPDM NBR etancheite"},
+    {"paese": "Francia", "settore": "Pompes industrielles", "query": "fabricants pompes industrielles France joints dynamiques etancheite elastomere"},
     {"paese": "Francia", "settore": "Automotive", "query": "equipementiers automobiles France joints etancheite fluides gomme metal surmoulage"},
-    
-    # Spagna
-    {"paese": "Spagna", "settore": "Valvulas", "query": "fabricantes valvulas industriales España juntas elastomero EPDM NBR estanqueidad"},
+    {"paese": "Francia", "settore": "Agroalimentaire", "query": "fabricants equipements agroalimentaires France joints FDA EPDM silicone etancheite hygiénique"},
+    {"paese": "Francia", "settore": "Hydraulique", "query": "fabricants composants hydrauliques France joints NBR FKM haute pression verin"},
+
+    # ── SPAGNA ──────────────────────────────────────────────────────────────
+    {"paese": "Spagna", "settore": "Valvulas industriales", "query": "fabricantes valvulas industriales España juntas elastomero EPDM NBR estanqueidad"},
     {"paese": "Spagna", "settore": "Automotive", "query": "proveedores componentes automocion España juntas estanqueidad caucho metal sobremoldeo"},
-    
-    # Polonia - mercato in crescita
+    {"paese": "Spagna", "settore": "Alimentaria", "query": "fabricantes equipos industria alimentaria España juntas FDA EPDM silicona higiénica"},
+    {"paese": "Spagna", "settore": "Tratamiento aguas", "query": "fabricantes sistemas tratamiento aguas España valvulas juntas EPDM"},
+
+    # ── POLONIA ─────────────────────────────────────────────────────────────
     {"paese": "Polonia", "settore": "Automotive", "query": "producenci podzespolow samochodowych Polska uszczelnienia elastomer guma metal"},
-    {"paese": "Polonia", "settore": "Przemysl", "query": "producenci zaworow pomp przemyslowych Polska uszczelnienia elastomerowe NBR EPDM"},
-    
-    # Benelux
-    {"paese": "Belgio/Olanda", "settore": "Valves", "query": "manufacturers industrial valves Belgium Netherlands elastomer seals EPDM NBR FKM high pressure"},
+    {"paese": "Polonia", "settore": "Przemysl zawory", "query": "producenci zaworow pomp przemyslowych Polska uszczelnienia elastomerowe NBR EPDM"},
+    {"paese": "Polonia", "settore": "Hydraulika", "query": "producenci komponentow hydraulicznych Polska uszczelnienia NBR wysocisnieniowe silowniki"},
+
+    # ── BENELUX ─────────────────────────────────────────────────────────────
+    {"paese": "Belgio/Olanda", "settore": "Valves industrial", "query": "manufacturers industrial valves Belgium Netherlands elastomer seals EPDM NBR FKM"},
     {"paese": "Belgio/Olanda", "settore": "Automotive", "query": "automotive suppliers Belgium Netherlands rubber metal overmolded sealing gaskets Tier2"},
-    
-    # UK
+    {"paese": "Belgio/Olanda", "settore": "Food processing", "query": "food processing equipment manufacturers Belgium Netherlands FDA EPDM silicone seals hygienic"},
+    {"paese": "Belgio/Olanda", "settore": "Water treatment", "query": "water treatment equipment Netherlands Belgium EPDM seals valves pumps"},
+
+    # ── UK ──────────────────────────────────────────────────────────────────
     {"paese": "UK", "settore": "Valves pumps", "query": "manufacturers valves pumps UK elastomer seals rubber metal overmoulded gaskets fluid sealing"},
-    
-    # Svezia/Scandinavia
-    {"paese": "Svezia/Scandinavia", "settore": "Industrial", "query": "manufacturers industrial valves pumps Sweden Norway Denmark elastomer seals rubber gaskets"},
+    {"paese": "UK", "settore": "Oil Gas offshore", "query": "manufacturers oil gas offshore components UK FKM HNBR seals high pressure valves"},
+    {"paese": "UK", "settore": "Pharmaceutical", "query": "pharmaceutical biotech equipment manufacturers UK FDA silicone EPDM seals hygienic"},
+
+    # ── SVEZIA / SCANDINAVIA ─────────────────────────────────────────────────
+    {"paese": "Svezia/Scandinavia", "settore": "Industrial valves", "query": "manufacturers industrial valves pumps Sweden Norway Denmark elastomer seals rubber"},
+    {"paese": "Svezia/Scandinavia", "settore": "Mining", "query": "mining equipment manufacturers Sweden Norway rubber seals high wear elastomer components"},
+
+    # ── AUSTRIA ─────────────────────────────────────────────────────────────
+    {"paese": "Austria", "settore": "Maschinenbau", "query": "Maschinenbau Hersteller Oesterreich Dichtungen Elastomer Hydraulik Pneumatik Ventile"},
+    {"paese": "Austria", "settore": "Automotive", "query": "Automobilzulieferer Oesterreich Dichtungssysteme Gummi Metall overmolded"},
+
+    # ── SVIZZERA ─────────────────────────────────────────────────────────────
+    {"paese": "Svizzera", "settore": "Pharma Medtech", "query": "pharma medtech equipment manufacturers Switzerland FDA silicone EPDM seals clean room"},
+    {"paese": "Svizzera", "settore": "Valvole precisione", "query": "Hersteller Praezisionsventile Schweiz Dichtungen Elastomer Reinraum"},
+
+    # ── REPUBBLICA CECA / SLOVACCHIA ─────────────────────────────────────────
+    {"paese": "Rep. Ceca/Slovacchia", "settore": "Automotive", "query": "automotive component manufacturers Czech Republic Slovakia rubber metal seals overmolded Tier2"},
+    {"paese": "Rep. Ceca/Slovacchia", "settore": "Industrial", "query": "vyrobci prumyslovych ventilu cerpadel Ceska Republika tesneni elastomer"},
+
+    # ── UNGHERIA / ROMANIA ───────────────────────────────────────────────────
+    {"paese": "Ungheria/Romania", "settore": "Automotive", "query": "automotive suppliers Hungary Romania rubber seals overmolded components Tier1 Tier2"},
+
+    # ── PORTOGALLO ───────────────────────────────────────────────────────────
+    {"paese": "Portogallo", "settore": "Automotive", "query": "fornecedores componentes automovel Portugal vedantes borracha metal sobremoldagem"},
+
+    # ── QUERY PER NICCHIA TECNICA (cross-paese) ──────────────────────────────
+    {"paese": "Europa", "settore": "Valvole a farfalla", "query": "butterfly valve manufacturers Europe elastomer lined seat rubber EPDM NBR"},
+    {"paese": "Europa", "settore": "Valvole a sfera", "query": "ball valve seat manufacturers Europe PTFE rubber EPDM FKM sealing"},
+    {"paese": "Europa", "settore": "Attuatori rotativi", "query": "rotary actuator manufacturers Europe rubber metal seals hydraulic pneumatic"},
+    {"paese": "Europa", "settore": "Pompe dosatrici", "query": "dosing pump diaphragm pump manufacturers Europe EPDM FKM rubber diaphragm seals"},
+    {"paese": "Europa", "settore": "Sistemi freno automotive", "query": "automotive brake system component manufacturers Europe rubber metal seals EPDM"},
+    {"paese": "Europa", "settore": "Raffreddamento automotive", "query": "automotive cooling system component manufacturers Europe rubber metal overmolded gaskets hoses"},
+    {"paese": "Europa", "settore": "Compressori frigoriferi", "query": "refrigeration compressor manufacturers Europe NBR HNBR FKM seals refrigerant"},
+    {"paese": "Europa", "settore": "Filtrazione industriale", "query": "industrial filtration housing manufacturers Europe rubber gaskets EPDM NBR sealing"},
 ]
+
 
 def get_sheets_service():
     creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
@@ -63,6 +117,7 @@ def get_sheets_service():
         scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     )
     return build("sheets", "v4", credentials=creds)
+
 
 def ensure_sheet_exists(service):
     spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
@@ -73,6 +128,7 @@ def ensure_sheet_exists(service):
             body={"requests": [{"addSheet": {"properties": {"title": SHEET_NAME}}}]}
         ).execute()
         print(f"Foglio '{SHEET_NAME}' creato.")
+
 
 def init_sheet(service):
     ensure_sheet_exists(service)
@@ -92,12 +148,50 @@ def init_sheet(service):
             body={"values": headers}
         ).execute()
 
+
+def get_run_state(service):
+    """Legge l'indice del prossimo target da processare dal foglio 'State'."""
+    try:
+        spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+        sheet_names = [s["properties"]["title"] for s in spreadsheet["sheets"]]
+        if "State" not in sheet_names:
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID,
+                body={"requests": [{"addSheet": {"properties": {"title": "State"}}}]}
+            ).execute()
+            return 0
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID, range="State!A1"
+        ).execute()
+        values = result.get("values", [])
+        if values and values[0]:
+            return int(values[0][0])
+        return 0
+    except Exception as e:
+        print(f"  Errore lettura state: {e}")
+        return 0
+
+
+def save_run_state(service, next_index):
+    """Salva l'indice del prossimo target da processare."""
+    try:
+        service.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range="State!A1",
+            valueInputOption="RAW",
+            body={"values": [[next_index]]}
+        ).execute()
+    except Exception as e:
+        print(f"  Errore salvataggio state: {e}")
+
+
 def get_existing_companies(service):
     result = service.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=f"{SHEET_NAME}!B:B"
     ).execute()
     values = result.get("values", [])
     return {row[0].strip().lower() for row in values if row}
+
 
 def append_leads(service, leads):
     if not leads:
@@ -110,85 +204,124 @@ def append_leads(service, leads):
         body={"values": leads}
     ).execute()
 
+
+def extract_json_from_text(text: str) -> dict | None:
+    """Estrae il JSON dalla risposta testuale in modo robusto."""
+    if not text:
+        return None
+
+    # 1. Prova blocco ```json ... ```
+    if "```json" in text:
+        try:
+            start = text.index("```json") + 7
+            end = text.index("```", start)
+            candidate = text[start:end].strip()
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # 2. Prova blocco ``` ... ```
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts[1::2]:  # parti dispari = dentro i backtick
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                try:
+                    return json.loads(part)
+                except Exception:
+                    pass
+
+    # 3. Trova il primo { e l'ultimo } bilanciato
+    start = text.find("{")
+    if start == -1:
+        return None
+
+    # Cerca il } bilanciato partendo dall'inizio del JSON
+    depth = 0
+    end = -1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end == -1:
+        return None
+
+    try:
+        return json.loads(text[start:end])
+    except Exception:
+        pass
+
+    # 4. Fallback: cerca dall'ultimo { (a volte c'è testo prima del JSON reale)
+    last_start = text.rfind('{"aziende"')
+    if last_start != -1:
+        try:
+            return json.loads(text[last_start:])
+        except Exception:
+            pass
+
+    return None
+
+
 def research_companies(target: dict, existing_companies: set) -> list:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     print(f"  → Cercando: {target['paese']} / {target['settore']}")
 
-    search_prompt = f"""Sei un agente di ricerca commerciale B2B per HTP - High Tech Project S.r.l., 
-produttore italiano specializzato in guarnizioni sovrastampate gomma-metallo e gomma-plastica.
+    search_prompt = f"""Sei un agente di ricerca commerciale B2B per HTP - High Tech Project S.r.l.,
+produttore italiano specializzato in componenti sovrastampati gomma-metallo e gomma-plastica.
 
-HTP produce componenti di tenuta in elastomero sovrastampati su inserto metallico o plastico:
-- Guarnizioni statiche e dinamiche sovrastampate
-- Componenti per valvole (sedi valvola, otturatori con guarnizione integrata)
-- Tenute per pompe e sistemi idraulici
-- Componenti automotive (sistemi di tenuta fluidi, raffreddamento, climatizzazione)
-- Articoli tecnici in gomma NBR, EPDM, FKM, HNBR, VMQ su progetto
+HTP produce: guarnizioni statiche/dinamiche sovrastampate, sedi valvola con guarnizione integrata,
+tenute per pompe, componenti automotive (tenuta fluidi, raffreddamento), articoli tecnici in gomma
+NBR, EPDM, FKM, HNBR, VMQ su progetto cliente.
 
-I CLIENTI IDEALI di HTP sono aziende che:
-- Producono valvole industriali, raccordi, componenti idraulici o pneumatici
-- Producono pompe centrifughe, volumetriche, dosatrici
-- Producono componenti automotive (sistemi raffreddamento, climatizzazione, freni, carburante)
-- Producono sistemi HVAC, refrigerazione, trattamento acque
-- Hanno nel loro prodotto guarnizioni elastomeriche gomma-metallo o guarnizioni statiche/dinamiche in gomma tecnica
-- Hanno 50-1000 dipendenti
-- Sono in {target['paese']}
+CLIENTI IDEALI: aziende con 50-1000 dipendenti in {target['paese']} che producono:
+- valvole industriali, raccordi, componenti idraulici/pneumatici
+- pompe centrifughe, volumetriche, dosatrici
+- componenti automotive (raffreddamento, climatizzazione, freni)
+- sistemi HVAC, refrigerazione, trattamento acque
+- attrezzature food processing, farmaceutiche
 
 Esegui questa ricerca web: {target['query']}
 
-Trova almeno 5-8 aziende CONCRETE con nome reale, non agenzie o distributori.
-Per ogni azienda fornisci:
-- Nome azienda esatto
-- Sito web
-- Città e paese
-- Dimensione stimata (dipendenti)
-- Prodotto principale che richiederebbe guarnizioni elastomeriche
-- Nome e ruolo del responsabile acquisti o R&D se trovabile pubblicamente
-- Email o LinkedIn se pubblici
-- Telefono se disponibile
+Trova 5-8 aziende REALI con nome esatto verificato online. Escludi distributori e agenzie.
 
-Rispondi SOLO in JSON con questa struttura:
+Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
 {{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
 
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[{"role": "user", "content": search_prompt}]
-    )
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=3000,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{"role": "user", "content": search_prompt}]
+        )
+    except Exception as e:
+        print(f"    ⚠ Errore API: {e}")
+        return []
 
+    # Estrai tutto il testo dai blocchi della risposta
     full_text = ""
     for block in response.content:
-        if hasattr(block, "text"):
+        if hasattr(block, "text") and block.text:
             full_text += block.text
 
-    if not full_text:
+    if not full_text.strip():
+        print(f"    ⚠ Risposta vuota (nessun blocco testo)")
         return []
 
-    # Pulisci e parsa JSON
-    text = full_text.strip()
-    if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            if part.startswith("json"):
-                text = part[4:].strip()
-                break
-            elif "{" in part:
-                text = part.strip()
-                break
-
-    try:
-        # Trova il JSON nella risposta
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            data = json.loads(text[start:end])
-        else:
-            return []
-        aziende = data.get("aziende", [])
-    except:
-        print(f"    ⚠ Errore parsing JSON")
+    # Parse JSON robusto
+    data = extract_json_from_text(full_text)
+    if data is None:
+        print(f"    ⚠ Errore parsing JSON. Testo ricevuto ({len(full_text)} chars): {full_text[:200]!r}")
         return []
 
+    aziende = data.get("aziende", [])
     today = datetime.date.today().strftime("%d/%m/%Y")
     rows = []
 
@@ -217,23 +350,37 @@ Rispondi SOLO in JSON con questa struttura:
     print(f"    ✓ Trovate {len(rows)} nuove aziende")
     return rows
 
+
 def main():
     print(f"\n{'='*50}")
-    print(f"HTP Lead Agent v2 - {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    print(f"HTP Lead Agent v3 - {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
     print(f"{'='*50}\n")
 
     print("Connessione a Google Sheets...")
     service = get_sheets_service()
     init_sheet(service)
     existing = get_existing_companies(service)
-    print(f"Aziende già presenti: {len(existing)}\n")
+    print(f"Aziende già presenti: {len(existing)}")
+    print(f"Target totali disponibili: {len(SEARCH_TARGETS)}\n")
+
+    # Leggi da dove riprendere
+    start_index = get_run_state(service)
+    print(f"Indice di partenza: {start_index} (rotazione su {len(SEARCH_TARGETS)} target)\n")
+
+    # Seleziona MAX_TARGETS_PER_RUN target consecutivi in modo ciclico
+    targets_this_run = []
+    for i in range(MAX_TARGETS_PER_RUN):
+        idx = (start_index + i) % len(SEARCH_TARGETS)
+        targets_this_run.append((idx, SEARCH_TARGETS[idx]))
+
+    next_index = (start_index + MAX_TARGETS_PER_RUN) % len(SEARCH_TARGETS)
 
     all_leads = []
-    for target in SEARCH_TARGETS:
+    for idx, target in targets_this_run:
         try:
             leads = research_companies(target, existing)
             all_leads.extend(leads)
-            time.sleep(2)
+            time.sleep(3)
         except Exception as e:
             print(f"  ⚠ Errore per {target['paese']}/{target['settore']}: {e}")
 
@@ -242,9 +389,13 @@ def main():
         append_leads(service, all_leads)
         print(f"✓ Completato!")
     else:
-        print("\nNessun nuovo lead trovato.")
+        print("\nNessun nuovo lead trovato in questa run.")
 
+    # Salva il prossimo indice
+    save_run_state(service, next_index)
+    print(f"Prossima run partirà dall'indice {next_index} ({SEARCH_TARGETS[next_index]['paese']} / {SEARCH_TARGETS[next_index]['settore']})")
     print(f"\nProssima esecuzione: domani notte\n")
+
 
 if __name__ == "__main__":
     main()
