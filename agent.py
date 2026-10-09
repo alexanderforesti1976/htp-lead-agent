@@ -16,6 +16,9 @@ SHEET_NAME = "Leads"
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
 
+# Tutti i materiali elastomerici lavorati da HTP (aggiunti alle query di ricerca)
+MATERIALI_HTP = "NBR EPDM FKM HNBR VMQ MVQ FMVQ ACM AEM ECO CR"
+
 # Ogni notte vengono processati MAX_TARGETS_PER_RUN target scelti ciclicamente
 # così da coprire sempre query diverse senza ripetere le stesse
 MAX_TARGETS_PER_RUN = 8
@@ -278,7 +281,7 @@ produttore italiano specializzato in componenti sovrastampati gomma-metallo e go
 
 HTP produce: guarnizioni statiche/dinamiche sovrastampate, sedi valvola con guarnizione integrata,
 tenute per pompe, componenti automotive (tenuta fluidi, raffreddamento), articoli tecnici in gomma
-NBR, EPDM, FKM, HNBR, VMQ su progetto cliente.
+NBR, EPDM, FKM, HNBR, VMQ, MVQ, FMVQ, ACM, AEM, ECO, CR su progetto cliente.
 
 CLIENTI IDEALI: aziende con 50-1000 dipendenti in {target['paese']} che producono:
 - valvole industriali, raccordi, componenti idraulici/pneumatici
@@ -296,9 +299,9 @@ CLIENTI IDEALI: aziende con 50-1000 dipendenti in {target['paese']} che producon
 
 ⚠ ECCEZIONE: grandi gruppi industriali (200+ dipendenti) del settore gomma/tenute SOLO se noti a livello europeo (es. Trelleborg, Freudenberg, Parker Hannifin, NOK, ElringKlinger) possono essere inclusi come potenziali PARTNER, non come clienti.
 
-Esegui questa ricerca web: {target['query']}
+Esegui questa ricerca web: {target['query']} {MATERIALI_HTP}
 
-Trova 5-8 aziende REALI con nome esatto verificato online che USANO guarnizioni/tenute in gomma, non che le producono.
+Trova 5-8 aziende REALI con nome esatto verificato online che USANO guarnizioni/tenute in gomma ({MATERIALI_HTP}), non che le producono.
 
 Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
 {{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
