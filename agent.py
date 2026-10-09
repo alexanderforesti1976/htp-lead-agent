@@ -276,46 +276,79 @@ def research_companies(target: dict, existing_companies: set) -> list:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     print(f"  → Cercando: {target['paese']} / {target['settore']}")
 
-    # Lista aziende già presenti per evitare duplicati nel prompt
     existing_list = ", ".join(sorted(existing_companies)[:50]) if existing_companies else "nessuna"
 
-    search_prompt = f"""Sei un esperto di mercato industriale europeo con conoscenza approfondita di produttori di valvole, pompe, componenti automotive e attrezzature industriali.
+    search_prompt = f"""Sei un ricercatore B2B industriale specializzato nel mercato europeo. Devi trovare potenziali clienti per HTP, che produce overmolding gomma-metallo e gomma-plastica.
 
-Elenca 6 aziende REALI che esistono in {target['paese']} nel settore: {target['settore']}.
+OBIETTIVO: Trovare 3-5 aziende REALI in {target['paese']} nel settore "{target['settore']}" con CONTATTI DIRETTI verificati.
 
-REQUISITI:
-- Aziende che USANO guarnizioni/tenute in gomma ({MATERIALI_HTP}) nei loro prodotti, NON che le producono
-- Dimensione: 50-1000 dipendenti (Tier 2/3, non grandi multinazionali già note)
-- Devono essere aziende reali con sede in {target['paese']}
-- Settore specifico: {target['settore']}
+USA web_search (max 3 ricerche) in questo modo:
+1. Prima ricerca: trova aziende reali nel settore (es: "{target['settore']} manufacturer {target['paese'].split('/')[0].strip()} company 100 employees" oppure in lingua locale)
+2. Per le 2-3 aziende più promettenti, fai UNA ricerca per trovare il contatto diretto: CEO, General Manager, o Responsabile Acquisti
+   Es: "Mario Rossi CEO [nome azienda]" oppure "[nome azienda] purchasing director email LinkedIn"
 
-⚠ ESCLUDI ASSOLUTAMENTE:
-- Produttori di guarnizioni, O-ring, tenute (Freudenberg, Parker, Trelleborg, Hutchinson, SKF, NOK)
-- Produttori di articoli in gomma o elastomeri (MB Guarnizioni, Effegomma, AL-GOM, Elastotech, Novotema)
-- Produttori di sovrastampaggio gomma-metallo (concorrenti di HTP)
-- Distributori, agenzie commerciali
-- Aziende già in lista: {existing_list}
+CRITERI AZIENDE:
+- Dimensione: 50-500 dipendenti (PMI, Tier 2/3 — NO multinazionali grandi)
+- Producono componenti che usano guarnizioni/tenute gomma nei loro prodotti
+- Settore: {target['settore']}
+- Sede in {target['paese']}
 
-Per ogni azienda fornisci il sito web ufficiale reale se lo conosci, altrimenti lascia vuoto.
+⛔ ESCLUDI ASSOLUTAMENTE:
+- Produttori guarnizioni/O-ring: Freudenberg, Parker Hannifin, Trelleborg, Hutchinson, SKF, NOK, Simrit
+- Produttori articoli gomma: MB Guarnizioni, Effegomma, AL-GOM, Elastotech, Novotema, Tekno Sil
+- Multinazionali Tier 1: Eaton, Bosch Rexroth, Kolbenschmidt, Pierburg, Sachs, ZF Friedrichshafen, Linamar, HYDAC, KSB, Poclain Hydraulics, Bucher Hydraulics, Continental, Faurecia, Delphi, BorgWarner, Dana, Valeo, Knorr-Bremse, Wabco
+- Distributori puri, agenzie, importatori senza produzione propria
+- Già presenti: {existing_list}
 
-Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
-{{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
+FORMATO RISPOSTA — JSON valido e preciso:
+{{"aziende": [
+  {{
+    "nome": "Nome Azienda Srl",
+    "sito": "https://www.sitoazienda.com",
+    "citta": "Città",
+    "paese": "{target['paese']}",
+    "dimensione": "~150 dipendenti",
+    "prodotto": "valvole idrauliche per industria",
+    "contatto_nome": "Mario Rossi",
+    "contatto_ruolo": "General Manager",
+    "email": "m.rossi@azienda.com",
+    "linkedin": "https://linkedin.com/in/mario-rossi",
+    "telefono": "+39 030 1234567",
+    "perche_htp": "produce valvole con sede valvola in gomma NBR/EPDM che richiedono overmolding"
+  }}
+]}}
+
+⚠ REGOLE FONDAMENTALI:
+- NON inventare email, nomi o LinkedIn — usa SOLO dati trovati via web search
+- Se non trovi contatto diretto per un'azienda, lascia contatto_nome/email/linkedin vuoti
+- Preferisco 2 aziende con contatti REALI verificati che 6 aziende senza niente
+- email info@ generiche NON servono: inserisci SOLO email dirette personali"""
 
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=2000,
+            max_tokens=3000,
+            tools=[{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 3
+            }],
             messages=[{"role": "user", "content": search_prompt}]
         )
     except Exception as e:
         print(f"    ⚠ Errore API: {e}")
         return []
 
-    # Estrai tutto il testo dai blocchi della risposta
+    # Estrai tutto il testo dai blocchi della risposta (ignora tool_use/tool_result/search blocks)
     full_text = ""
+    search_count = 0
     for block in response.content:
         if hasattr(block, "text") and block.text:
             full_text += block.text
+        elif hasattr(block, "type") and block.type == "tool_use":
+            search_count += 1
+
+    print(f"    → Web search effettuate: {search_count}")
 
     if not full_text.strip():
         print(f"    ⚠ Risposta vuota (nessun blocco testo)")
@@ -336,6 +369,13 @@ Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
         if not nome or nome.lower() in existing_companies:
             continue
         existing_companies.add(nome.lower())
+
+        # Filtra email generiche (info@, contatti@, ecc.)
+        email = az.get("email", "").strip()
+        generic_prefixes = ("info@", "contatti@", "contact@", "kontakt@", "info.", "general@", "office@")
+        if email.lower().startswith(generic_prefixes):
+            email = ""
+
         rows.append([
             today,
             nome,
@@ -345,7 +385,7 @@ Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
             az.get("sito", ""),
             az.get("contatto_nome", ""),
             az.get("contatto_ruolo", ""),
-            az.get("email", ""),
+            email,
             az.get("linkedin", ""),
             az.get("telefono", ""),
             az.get("perche_htp", ""),
@@ -357,6 +397,74 @@ Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
     return rows
 
 
+def cleanup_empty_leads(service):
+    """Rimuove dal foglio Leads le righe senza alcun dato di contatto (nome, email, LinkedIn tutti vuoti)."""
+    print("Pulizia lead senza contatti...")
+    try:
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SHEET_ID,
+            range=f"{SHEET_NAME}!A:N"
+        ).execute()
+        all_rows = result.get("values", [])
+
+        if len(all_rows) <= 1:
+            print("  Nessun dato da pulire.")
+            return
+
+        # Identifica righe (0-based, riga 0 = header) dove nome azienda c'è ma contatto, email, linkedin sono tutti vuoti
+        to_delete = []
+        for i, row in enumerate(all_rows):
+            if i == 0:
+                continue  # skip header
+            nome_az = row[1].strip() if len(row) > 1 else ""
+            contatto = row[6].strip() if len(row) > 6 else ""
+            email = row[8].strip() if len(row) > 8 else ""
+            linkedin = row[9].strip() if len(row) > 9 else ""
+            if nome_az and not contatto and not email and not linkedin:
+                to_delete.append(i)
+
+        if not to_delete:
+            print("  Nessun lead vuoto trovato.")
+            return
+
+        print(f"  Trovate {len(to_delete)} righe senza contatti da rimuovere...")
+
+        # Ottieni il sheetId numerico del foglio "Leads"
+        spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+        sheet_id = None
+        for s in spreadsheet["sheets"]:
+            if s["properties"]["title"] == SHEET_NAME:
+                sheet_id = s["properties"]["sheetId"]
+                break
+
+        if sheet_id is None:
+            print("  ⚠ Foglio Leads non trovato.")
+            return
+
+        # Elimina in ordine inverso per non spostare gli indici
+        requests = []
+        for row_idx in sorted(to_delete, reverse=True):
+            requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": row_idx,
+                        "endIndex": row_idx + 1
+                    }
+                }
+            })
+
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": requests}
+        ).execute()
+
+        print(f"  ✓ Rimosse {len(to_delete)} righe senza contatti dal foglio.")
+    except Exception as e:
+        print(f"  ⚠ Errore durante pulizia: {e}")
+
+
 def main():
     print(f"\n{'='*50}")
     print(f"HTP Lead Agent v3 - {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}")
@@ -365,6 +473,7 @@ def main():
     print("Connessione a Google Sheets...")
     service = get_sheets_service()
     init_sheet(service)
+    cleanup_empty_leads(service)
     existing = get_existing_companies(service)
     print(f"Aziende già presenti: {len(existing)}")
     print(f"Target totali disponibili: {len(SEARCH_TARGETS)}\n")
