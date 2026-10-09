@@ -276,32 +276,27 @@ def research_companies(target: dict, existing_companies: set) -> list:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     print(f"  → Cercando: {target['paese']} / {target['settore']}")
 
-    search_prompt = f"""Sei un agente di ricerca commerciale B2B per HTP - High Tech Project S.r.l.,
-produttore italiano specializzato in componenti sovrastampati gomma-metallo e gomma-plastica.
+    # Lista aziende già presenti per evitare duplicati nel prompt
+    existing_list = ", ".join(sorted(existing_companies)[:50]) if existing_companies else "nessuna"
 
-HTP produce: guarnizioni statiche/dinamiche sovrastampate, sedi valvola con guarnizione integrata,
-tenute per pompe, componenti automotive (tenuta fluidi, raffreddamento), articoli tecnici in gomma
-NBR, EPDM, FKM, HNBR, VMQ, MVQ, FMVQ, ACM, AEM, ECO, CR su progetto cliente.
+    search_prompt = f"""Sei un esperto di mercato industriale europeo con conoscenza approfondita di produttori di valvole, pompe, componenti automotive e attrezzature industriali.
 
-CLIENTI IDEALI: aziende con 50-1000 dipendenti in {target['paese']} che producono:
-- valvole industriali, raccordi, componenti idraulici/pneumatici
-- pompe centrifughe, volumetriche, dosatrici
-- componenti automotive (raffreddamento, climatizzazione, freni)
-- sistemi HVAC, refrigerazione, trattamento acque
-- attrezzature food processing, farmaceutiche
+Elenca 6 aziende REALI che esistono in {target['paese']} nel settore: {target['settore']}.
 
-⚠ ESCLUSIONI ASSOLUTE (non includere MAI):
-- Produttori di guarnizioni, O-ring, tenute meccaniche (es. Freudenberg, Parker, Trelleborg, Hutchinson)
-- Produttori di articoli tecnici in gomma, elastomeri, mescole gomma (es. MB Guarnizioni, Centro Guarnizioni, Effegomma, AL-GOM, Elastotech, Tedeschi Gomma, Novotema, JEANTET, ACI RUBBER)
-- Produttori di sovrastampaggio gomma-metallo o gomma-plastica (sono concorrenti diretti di HTP)
-- Aziende con meno di 200 dipendenti che producono guarnizioni, tenute o articoli in gomma
-- Distributori, agenzie, importatori/esportatori
+REQUISITI:
+- Aziende che USANO guarnizioni/tenute in gomma ({MATERIALI_HTP}) nei loro prodotti, NON che le producono
+- Dimensione: 50-1000 dipendenti (Tier 2/3, non grandi multinazionali già note)
+- Devono essere aziende reali con sede in {target['paese']}
+- Settore specifico: {target['settore']}
 
-⚠ ECCEZIONE: grandi gruppi industriali (200+ dipendenti) del settore gomma/tenute SOLO se noti a livello europeo (es. Trelleborg, Freudenberg, Parker Hannifin, NOK, ElringKlinger) possono essere inclusi come potenziali PARTNER, non come clienti.
+⚠ ESCLUDI ASSOLUTAMENTE:
+- Produttori di guarnizioni, O-ring, tenute (Freudenberg, Parker, Trelleborg, Hutchinson, SKF, NOK)
+- Produttori di articoli in gomma o elastomeri (MB Guarnizioni, Effegomma, AL-GOM, Elastotech, Novotema)
+- Produttori di sovrastampaggio gomma-metallo (concorrenti di HTP)
+- Distributori, agenzie commerciali
+- Aziende già in lista: {existing_list}
 
-Esegui questa ricerca web: {target['query']} {MATERIALI_HTP}
-
-Trova 5-8 aziende REALI con nome esatto verificato online che USANO guarnizioni/tenute in gomma ({MATERIALI_HTP}), non che le producono.
+Per ogni azienda fornisci il sito web ufficiale reale se lo conosci, altrimenti lascia vuoto.
 
 Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
 {{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "contatto_nome": "", "contatto_ruolo": "", "email": "", "linkedin": "", "telefono": "", "perche_htp": ""}}]}}"""
@@ -309,8 +304,7 @@ Rispondi ESCLUSIVAMENTE con JSON valido, nessun testo prima o dopo:
     try:
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=3000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            max_tokens=2000,
             messages=[{"role": "user", "content": search_prompt}]
         )
     except Exception as e:
