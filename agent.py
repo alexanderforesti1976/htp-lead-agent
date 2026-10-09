@@ -446,7 +446,7 @@ def research_companies(target: dict, existing_companies: set) -> list:
             az.get("linkedin", ""),
             az.get("telefono", ""),
             az.get("perche_htp", ""),
-            "Da contattare",
+            "Da contattare" if az.get("contatto_nome") or az.get("email") or az.get("linkedin") else "Lead freddo",
             ""
         ])
 
@@ -454,9 +454,13 @@ def research_companies(target: dict, existing_companies: set) -> list:
     return rows
 
 
-def cleanup_empty_leads(service):
-    """Rimuove dal foglio Leads le righe senza alcun dato di contatto (nome, email, LinkedIn tutti vuoti)."""
-    print("Pulizia lead senza contatti...")
+def cleanup_empty_leads(service, min_age_days=7):
+    """Rimuove dal foglio Leads le righe VECCHIE (>7gg) senza alcun dato di contatto.
+    I lead recenti restano anche senza contatti — l'azienda stessa ha valore come target."""
+    print(f"Pulizia lead senza contatti (età > {min_age_days} giorni)...")
+    today = datetime.date.today()
+    cutoff = today - datetime.timedelta(days=min_age_days)
+
     try:
         result = service.spreadsheets().values().get(
             spreadsheetId=SHEET_ID,
@@ -469,6 +473,7 @@ def cleanup_empty_leads(service):
             return
 
         # Identifica righe (0-based, riga 0 = header) dove nome azienda c'è ma contatto, email, linkedin sono tutti vuoti
+        # E la riga è più vecchia del cutoff
         to_delete = []
         for i, row in enumerate(all_rows):
             if i == 0:
@@ -478,7 +483,14 @@ def cleanup_empty_leads(service):
             email = row[8].strip() if len(row) > 8 else ""
             linkedin = row[9].strip() if len(row) > 9 else ""
             if nome_az and not contatto and not email and not linkedin:
-                to_delete.append(i)
+                # Controlla l'età del lead
+                data_str = row[0].strip() if len(row) > 0 else ""
+                try:
+                    row_date = datetime.datetime.strptime(data_str, "%d/%m/%Y").date()
+                except Exception:
+                    row_date = today  # se la data non si legge, lo considero nuovo (non eliminare)
+                if row_date <= cutoff:
+                    to_delete.append(i)
 
         if not to_delete:
             print("  Nessun lead vuoto trovato.")
