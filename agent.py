@@ -272,110 +272,167 @@ def extract_json_from_text(text: str) -> dict | None:
     return None
 
 
+def discover_companies(target: dict, existing_companies: set, client) -> list:
+    """Step 1 — GRATIS, niente web search.
+    Chiede a Claude le aziende che conosce già dal training nel settore/paese dato.
+    Restituisce lista di dict {nome, sito, citta, paese, dimensione, prodotto, perche_htp}.
+    """
+    existing_list = ", ".join(sorted(existing_companies)[:60]) if existing_companies else "nessuna"
+
+    prompt = f"""Sei un esperto di mercato industriale europeo. Elenca 5 aziende REALI che conosci
+in {target['paese']} nel settore: {target['settore']}.
+
+CRITERI:
+- 50-500 dipendenti (PMI, Tier 2/3 — NO multinazionali)
+- Producono componenti che incorporano guarnizioni/tenute in gomma: valvole, pompe, attuatori, sistemi idraulici/pneumatici, componenti automotive, ecc.
+- Sede principale in {target['paese']}
+
+⛔ ESCLUDI:
+- Produttori guarnizioni/O-ring: Freudenberg, Parker Hannifin, Trelleborg, Hutchinson, SKF, NOK, Simrit
+- Produttori articoli gomma: MB Guarnizioni, Effegomma, AL-GOM, Elastotech, Novotema
+- Multinazionali Tier 1: Eaton, Bosch Rexroth, Kolbenschmidt, Pierburg, Sachs, ZF, Linamar, HYDAC, KSB, Poclain, Bucher Hydraulics, Continental, Faurecia, BorgWarner, Dana, Valeo, Knorr-Bremse, Wabco
+- Distributori, agenzie
+- Già in lista: {existing_list}
+
+Rispondi SOLO con JSON valido:
+{{"aziende": [{{"nome": "", "sito": "", "citta": "", "paese": "", "dimensione": "", "prodotto": "", "perche_htp": ""}}]}}"""
+
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+    except Exception as e:
+        print(f"    ⚠ Errore discovery: {e}")
+        return []
+
+    text = "".join(b.text for b in resp.content if hasattr(b, "text") and b.text)
+    data = extract_json_from_text(text)
+    if data is None:
+        return []
+    return data.get("aziende", [])
+
+
+def find_contacts(companies: list, client) -> list:
+    """Step 2 — WEB SEARCH mirato, 1 ricerca per azienda.
+    Per ogni azienda cerca il contatto diretto: CEO, General Manager o Responsabile Acquisti.
+    Restituisce la lista arricchita con contatto_nome, contatto_ruolo, email, linkedin, telefono.
+    """
+    if not companies:
+        return []
+
+    # Costruisci lista testuale delle aziende per il prompt
+    lines = "\n".join(
+        f"{i+1}. {az['nome']} — {az.get('sito', 'sito sconosciuto')} — {az.get('paese', '')}"
+        for i, az in enumerate(companies)
+    )
+
+    max_searches = len(companies)  # 1 ricerca dedicata per azienda
+
+    prompt = f"""Sei un ricercatore B2B. Per OGNUNA delle seguenti aziende devi trovare il contatto
+diretto: CEO, Amministratore Delegato, General Manager, o Responsabile Acquisti.
+
+AZIENDE DA CERCARE:
+{lines}
+
+STRATEGIA — usa esattamente UNA web_search per azienda:
+- Query tipo: "[nome azienda] CEO amministratore delegato LinkedIn" oppure
+  "[nome azienda] purchasing manager email" oppure
+  "[nome azienda] general manager nome cognome"
+- Cerca su LinkedIn, sito aziendale, Kompass, Europages, comunicati stampa
+
+FORMATO RISPOSTA — JSON con tutti i campi:
+{{"contatti": [
+  {{
+    "nome_azienda": "nome esatto come nella lista sopra",
+    "contatto_nome": "Nome Cognome",
+    "contatto_ruolo": "CEO / Amministratore Delegato / General Manager / Responsabile Acquisti",
+    "email": "nome.cognome@azienda.com (SOLO email personale diretta, MAI info@ o contatti@)",
+    "linkedin": "https://www.linkedin.com/in/nome-cognome",
+    "telefono": "+39 030 xxxxxxx"
+  }}
+]}}
+
+⚠ REGOLE ASSOLUTE:
+- NON inventare nomi, email o LinkedIn — SOLO dati trovati online
+- Se non trovi nulla per un'azienda, metti tutti i campi vuoti (ma includi nome_azienda)
+- email info@, contatti@, contact@, office@, general@ → lascia email VUOTO"""
+
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=2500,
+            tools=[{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": max_searches
+            }],
+            messages=[{"role": "user", "content": prompt}]
+        )
+    except Exception as e:
+        print(f"    ⚠ Errore contact lookup: {e}")
+        return companies  # restituisce aziende senza contatti piuttosto che niente
+
+    search_count = sum(1 for b in resp.content if hasattr(b, "type") and b.type == "tool_use")
+    print(f"    → Web search contatti: {search_count}/{max_searches}")
+
+    text = "".join(b.text for b in resp.content if hasattr(b, "text") and b.text)
+    data = extract_json_from_text(text)
+    if data is None:
+        return companies
+
+    # Merge: abbina i contatti trovati alle aziende per nome
+    contacts_by_name = {
+        c["nome_azienda"].strip().lower(): c
+        for c in data.get("contatti", [])
+        if c.get("nome_azienda")
+    }
+
+    # Filtro email generiche
+    generic_prefixes = ("info@", "contatti@", "contact@", "kontakt@", "general@", "office@", "admin@")
+
+    enriched = []
+    for az in companies:
+        key = az["nome"].strip().lower()
+        c = contacts_by_name.get(key, {})
+        email = c.get("email", "").strip()
+        if email.lower().startswith(generic_prefixes):
+            email = ""
+        enriched.append({**az,
+            "contatto_nome": c.get("contatto_nome", ""),
+            "contatto_ruolo": c.get("contatto_ruolo", ""),
+            "email": email,
+            "linkedin": c.get("linkedin", ""),
+            "telefono": c.get("telefono", ""),
+        })
+    return enriched
+
+
 def research_companies(target: dict, existing_companies: set) -> list:
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     print(f"  → Cercando: {target['paese']} / {target['settore']}")
 
-    existing_list = ", ".join(sorted(existing_companies)[:50]) if existing_companies else "nessuna"
-
-    search_prompt = f"""Sei un ricercatore B2B industriale specializzato nel mercato europeo. Devi trovare potenziali clienti per HTP, che produce overmolding gomma-metallo e gomma-plastica.
-
-OBIETTIVO: Trovare 3-5 aziende REALI in {target['paese']} nel settore "{target['settore']}" con CONTATTI DIRETTI verificati.
-
-USA web_search (max 3 ricerche) in questo modo:
-1. Prima ricerca: trova aziende reali nel settore (es: "{target['settore']} manufacturer {target['paese'].split('/')[0].strip()} company 100 employees" oppure in lingua locale)
-2. Per le 2-3 aziende più promettenti, fai UNA ricerca per trovare il contatto diretto: CEO, General Manager, o Responsabile Acquisti
-   Es: "Mario Rossi CEO [nome azienda]" oppure "[nome azienda] purchasing director email LinkedIn"
-
-CRITERI AZIENDE:
-- Dimensione: 50-500 dipendenti (PMI, Tier 2/3 — NO multinazionali grandi)
-- Producono componenti che usano guarnizioni/tenute gomma nei loro prodotti
-- Settore: {target['settore']}
-- Sede in {target['paese']}
-
-⛔ ESCLUDI ASSOLUTAMENTE:
-- Produttori guarnizioni/O-ring: Freudenberg, Parker Hannifin, Trelleborg, Hutchinson, SKF, NOK, Simrit
-- Produttori articoli gomma: MB Guarnizioni, Effegomma, AL-GOM, Elastotech, Novotema, Tekno Sil
-- Multinazionali Tier 1: Eaton, Bosch Rexroth, Kolbenschmidt, Pierburg, Sachs, ZF Friedrichshafen, Linamar, HYDAC, KSB, Poclain Hydraulics, Bucher Hydraulics, Continental, Faurecia, Delphi, BorgWarner, Dana, Valeo, Knorr-Bremse, Wabco
-- Distributori puri, agenzie, importatori senza produzione propria
-- Già presenti: {existing_list}
-
-FORMATO RISPOSTA — JSON valido e preciso:
-{{"aziende": [
-  {{
-    "nome": "Nome Azienda Srl",
-    "sito": "https://www.sitoazienda.com",
-    "citta": "Città",
-    "paese": "{target['paese']}",
-    "dimensione": "~150 dipendenti",
-    "prodotto": "valvole idrauliche per industria",
-    "contatto_nome": "Mario Rossi",
-    "contatto_ruolo": "General Manager",
-    "email": "m.rossi@azienda.com",
-    "linkedin": "https://linkedin.com/in/mario-rossi",
-    "telefono": "+39 030 1234567",
-    "perche_htp": "produce valvole con sede valvola in gomma NBR/EPDM che richiedono overmolding"
-  }}
-]}}
-
-⚠ REGOLE FONDAMENTALI:
-- NON inventare email, nomi o LinkedIn — usa SOLO dati trovati via web search
-- Se non trovi contatto diretto per un'azienda, lascia contatto_nome/email/linkedin vuoti
-- Preferisco 2 aziende con contatti REALI verificati che 6 aziende senza niente
-- email info@ generiche NON servono: inserisci SOLO email dirette personali"""
-
-    try:
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=3000,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3
-            }],
-            messages=[{"role": "user", "content": search_prompt}]
-        )
-    except Exception as e:
-        print(f"    ⚠ Errore API: {e}")
+    # Step 1: scopri aziende (gratis, solo training Claude)
+    companies = discover_companies(target, existing_companies, client)
+    # Filtra duplicati
+    companies = [az for az in companies if az.get("nome") and az["nome"].strip().lower() not in existing_companies]
+    if not companies:
+        print(f"    ⚠ Nessuna azienda trovata nello step 1")
         return []
+    print(f"    → Aziende trovate (step 1): {len(companies)}")
 
-    # Estrai tutto il testo dai blocchi della risposta (ignora tool_use/tool_result/search blocks)
-    full_text = ""
-    search_count = 0
-    for block in response.content:
-        if hasattr(block, "text") and block.text:
-            full_text += block.text
-        elif hasattr(block, "type") and block.type == "tool_use":
-            search_count += 1
+    # Step 2: cerca contatti diretti con web search mirata
+    companies = find_contacts(companies, client)
 
-    print(f"    → Web search effettuate: {search_count}")
-
-    if not full_text.strip():
-        print(f"    ⚠ Risposta vuota (nessun blocco testo)")
-        return []
-
-    # Parse JSON robusto
-    data = extract_json_from_text(full_text)
-    if data is None:
-        print(f"    ⚠ Errore parsing JSON. Testo ricevuto ({len(full_text)} chars): {full_text[:200]!r}")
-        return []
-
-    aziende = data.get("aziende", [])
     today = datetime.date.today().strftime("%d/%m/%Y")
     rows = []
 
-    for az in aziende:
+    for az in companies:
         nome = az.get("nome", "").strip()
         if not nome or nome.lower() in existing_companies:
             continue
         existing_companies.add(nome.lower())
-
-        # Filtra email generiche (info@, contatti@, ecc.)
-        email = az.get("email", "").strip()
-        generic_prefixes = ("info@", "contatti@", "contact@", "kontakt@", "info.", "general@", "office@")
-        if email.lower().startswith(generic_prefixes):
-            email = ""
-
         rows.append([
             today,
             nome,
@@ -385,7 +442,7 @@ FORMATO RISPOSTA — JSON valido e preciso:
             az.get("sito", ""),
             az.get("contatto_nome", ""),
             az.get("contatto_ruolo", ""),
-            email,
+            az.get("email", ""),
             az.get("linkedin", ""),
             az.get("telefono", ""),
             az.get("perche_htp", ""),
